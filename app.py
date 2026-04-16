@@ -1,3 +1,14 @@
+import gradio as gr
+"""
+Gradio interface. This is the design for the front end of the code and how it connects to the rest of the project.
+Contains:
+    Inputs componenets: key dropdown, boxes for inputs, sort button
+    Output display
+    Sort button connection to sort_playlist() function
+    app.launch 
+
+"""
+
 def merge(left, right, key):
     result = [] #sorted playlist
     i = 0 #left pointer
@@ -29,13 +40,27 @@ def merge_sort(songs, key, steps):
     left_half = songs[:mid]
     right_half = songs[mid:]
 
-    #sort halves using recusion
-    left_sorted = merge_sort(left_half, key, steps) 
+    # Record the split event — just the titles of each half
+    steps.append({
+        "type": "split",
+        "left": [s['title'] for s in left_half],
+        "right": [s['title'] for s in right_half]
+    })
+
+    #sort halves using recursion
+    left_sorted = merge_sort(left_half, key, steps)
     right_sorted = merge_sort(right_half, key, steps)
 
     #combine sorted lists into one sorted list
     merged = merge(left_sorted, right_sorted, key)
-    steps.append(merged[:]) #to be used for Merge Sort visual
+
+    # Record the merge event — what two lists combined into what result
+    steps.append({
+        "type": "merge",
+        "left": [s['title'] for s in left_sorted],
+        "right": [s['title'] for s in right_sorted],
+        "result": [s['title'] for s in merged]
+    })
 
     return merged
 
@@ -120,16 +145,26 @@ def parse_playlist(raw_text):
 def format_playlist(songs, key):
     # Dictionary -> formatted and readable table of songs and their corresponding info
 
-    # Column headers
-    header = f"{'#':<4} {'Title':<25} {'Artist':<20} {'Energy':>8} {'Duration':>10}" #header design/padding
-    divider = "-" * 70 #separates header from songs in playlist
-    
+    # Find the longest entry in each column to use as padding
+    title_width = max(len(song['title']) for song in songs)
+    artist_width = max(len(song['artist']) for song in songs)
+
+    # Ensure columns are at least as wide as their header
+    title_width = max(title_width, len("Title"))
+    artist_width = max(artist_width, len("Artist"))
+
+    # Column headers with dynamic padding
+    header = (f"{'#':<4} {'Title':<{title_width}} "
+              f"{'Artist':<{artist_width}} {'Energy':>8} {'Duration':>10}") #header design/padding
+    divider = "-" * (4 + title_width + artist_width + 22) #separates header from songs in playlist
+
     rows = []
-    for i, song in enumerate(songs, start=1): 
-        row = (f"{i:<4} {song['title']:<25} {song['artist']:<20}" #row for each song + padding
+    for i, song in enumerate(songs, start=1):
+        row = (f"{i:<4} {song['title']:<{title_width}} "
+               f"{song['artist']:<{artist_width}} " #row for each song + dynamic padding
                f"{song['energy']:>8} {song['duration']:>10}s") #s at end for duration of songs (60 -> 60s)
         rows.append(row)
-    
+
     return "\n".join([header, divider] + rows) #header, divider, row1, row2,...
 
 
@@ -147,6 +182,12 @@ def sort_playlist(raw_playlist, sort_key):
     except ValueError as e:
         return f"❌ Input Error:\n{str(e)}", ""
 
+    # Edge case: single song needs no sorting
+    if len(songs) == 1:
+        result = format_playlist(songs, key)
+        steps_msg = "Only one song in the playlist — no sorting needed!"
+        return result, steps_msg
+
     # Run merge sort, collecting steps along the way
     steps = []
     sorted_songs = merge_sort(songs, key, steps)
@@ -154,70 +195,111 @@ def sort_playlist(raw_playlist, sort_key):
     # Format and return the sorted result
     result = format_playlist(sorted_songs, key)
 
-        # Format each step and return alongside the sorted result
+    # Format each step as clean title only display
     steps_output = ""
-    for i, snapshot in enumerate(steps, start=1):
-        steps_output += f"Step {i}:\n"
-        steps_output += format_playlist(snapshot, key)
-        steps_output += "\n\n"
+    split_count = 0
+    merge_count = 0
+
+    for step in steps:
+        if step["type"] == "split":
+            split_count += 1
+            steps_output += f"SPLIT {split_count}:\n"
+            steps_output += f"  Left:  {step['left']}\n"
+            steps_output += f"  Right: {step['right']}\n\n"
+        elif step["type"] == "merge":
+            merge_count += 1
+            steps_output += f"MERGE {merge_count}:\n"
+            steps_output += f"  {step['left']}\n"
+            steps_output += f"  + {step['right']}\n"
+            steps_output += f"  → {step['result']}\n\n"
 
     return result, steps_output
 
-
-
-import gradio as gr 
-"""
-Gradio interface. This is the design for the front end of the code and how it connects to the rest of the project.
-Contains:
-    Inputs componenets: key dropdown, boxes for inputs, sort button
-    Output display
-    Sort button connection to sort_playlist() function
-    app.launch 
-
-"""
 
 
 sample_playlist = """Blinding Lights, The Weeknd, 87, 200
 Levitating, Dua Lipa, 72, 203
 Stay, The Kid LAROI, 91, 141
 good 4 u, Olivia Rodrigo, 65, 178
-Peaches, Justin Bieber, 55, 198"""
+Peaches, Justin Bieber, 55, 198
+Montero, Lil Nas X, 80, 137
+drivers license, Olivia Rodrigo, 42, 242
+Heat Waves, Glass Animals, 60, 238
+As It Was, Harry Styles, 78, 167
+Shivers, Ed Sheeran, 83, 207
+Easy On Me, Adele, 30, 224
+Industry Baby, Lil Nas X, 88, 212
+Bad Habits, Ed Sheeran, 76, 231
+Mood, 24kGoldn, 70, 141
+Watermelon Sugar, Harry Styles, 68, 174"""
 
 with gr.Blocks(title="Playlist Vibe Builder") as app: #container for playlist sorter
-    
+
     gr.Markdown("# 🎵 Playlist Vibe Builder") #displays text, uses Markdown formatting
-    gr.Markdown("Enter your playlist, choose a sorting key, and watch Merge Sort order your songs!")
-    
-    playlist_input = gr.Textbox( #
-        label="Enter Your Playlist",
+    gr.Markdown("Sort your playlist by **Energy Score** or **Duration** using the Merge Sort algorithm. The app will show you the final sorted playlist and every split and merge step the algorithm took to get there.")
+
+    # ── INPUT SECTION ──────────────────────────────
+    gr.Markdown("## 📋 Step 1 — Enter Your Playlist")
+    gr.Markdown(
+        "Enter one song per line using this exact format:\n\n"
+        "```\n"
+        "Title, Artist, Energy (0-100), Duration (seconds)\n"
+        "```\n"
+        "**Energy Score:** How energetic the song feels, from 0 (very calm) to 100 (very intense)\n\n"
+        "**Duration:** Length of the song in seconds — for example, a 3 minute 20 second song = 200 seconds"
+    )
+
+    playlist_input = gr.Textbox(
+        label="Your Playlist",
         lines=10,
         value=sample_playlist,
-        info="One song per line. Format: Title, Artist, Energy (0-100), Duration (seconds)"
+        info="A sample playlist is pre-loaded — feel free to edit it or replace it entirely"
     )
-    
+
+    # ── SORT KEY SECTION ───────────────────────────
+    gr.Markdown("## 🔑 Step 2 — Choose How to Sort")
+    gr.Markdown(
+        "**Energy Score** — sorts from calmest to most energetic. Good for building up a vibe gradually.\n\n"
+        "**Duration (seconds)** — sorts from shortest to longest song."
+    )
+
     sort_key_dropdown = gr.Dropdown(
         choices=["Energy Score", "Duration (seconds)"],
         value="Energy Score",
         label="Sort By"
     )
-    
-    sort_button = gr.Button("Sort My Playlist!")
-    
-    sorted_output = gr.Textbox(
-        label="Sorted Playlist",
-        lines=10,
-        interactive=False
+
+    # ── SORT BUTTON ────────────────────────────────
+    gr.Markdown("## ▶ Step 3 — Sort!")
+    sort_button = gr.Button("Sort My Playlist!", variant="primary")
+
+    # ── OUTPUT SECTION ─────────────────────────────
+    gr.Markdown("## 📊 Results")
+    gr.Markdown(
+        "**Sorted Playlist** — your songs in sorted order from lowest to highest by your chosen key.\n\n"
+        "**Step-by-Step Merge Process** — every split and merge the algorithm performed. "
+        "SPLIT steps show the list being divided in half. MERGE steps show two sublists being combined in sorted order."
     )
-    steps_output = gr.Textbox(
-        label="Step-by-Step Merge Process",
-        lines=20,
-        interactive=False
-    )
+
+    with gr.Row(): #display outputs side by side
+        sorted_output = gr.Code(
+            label="Sorted Playlist",
+            lines=20,
+            interactive=False,
+            language=None
+        )
+
+        steps_output = gr.Code(
+            label="Step-by-Step Merge Process",
+            lines=20,
+            interactive=False,
+            language=None
+        )
 
     sort_button.click(
         fn=sort_playlist,
         inputs=[playlist_input, sort_key_dropdown],
         outputs=[sorted_output, steps_output]
     )
-    
+
 app.launch()
